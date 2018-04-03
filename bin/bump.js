@@ -8,7 +8,6 @@ const Url = require('url');
 
 const Hoek = require('hoek');
 const Git = require('nodegit');
-
 const Octokit = require('@octokit/rest');
 
 
@@ -101,51 +100,7 @@ internals.getBaseUrl = function (hostName) {
     return `https://${hostName}/api/v3`;
 };
 
-exports.bump = async function (inputPath, packageName, beforeVersion, afterVersion) {
-
-    Hoek.assert(GITHUB_USERNAME, 'GITHUB_USERNAME required');
-    Hoek.assert(GITHUB_PASSWORD, 'GITHUB_PASSWORD required');
-
-    const packagePath = Path.resolve(inputPath, 'package.json');
-    const repoInfo = await internals.getRepoInfo(inputPath);
-    const safeVersion = afterVersion.replace(/[\^\~]/g, '');
-    const safePackageName = packageName.replace('@', '').replace('/', '-');
-    const branchName = `bump-${safePackageName}-v${safeVersion}`;
-    const commitMessage = `Bump ${safePackageName} to v${safeVersion}`;
-
-    // CREATE THE BRANCH
-
-    // fail if there are changes that need stashing
-    Hoek.assert(!await internals.repoHasUncommittedChanges(inputPath), `The repo (${inputPath}) has uncommitted changes.`);
-
-    // git checkout master
-    await internals.checkoutBranch(inputPath, 'master');
-
-    // git pull
-    await internals.pull(inputPath);
-
-    // fail if the current version doesn't match the before version
-    const pkg = JSON.parse(Fs.readFileSync(packagePath, 'utf8'));
-    const currentVersion = pkg.dependencies[packageName];
-    Hoek.assert(currentVersion === beforeVersion, `${currentVersion} must equal ${beforeVersion}`);
-
-    // git checkout -b ${branchName}
-    await internals.createBranch(inputPath, branchName);
-    await internals.checkoutBranch(inputPath, branchName);
-
-    // change the file
-    pkg.dependencies[packageName] = afterVersion;
-    Fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n');
-
-    // add and commit the change
-    await internals.commitPaths(inputPath, ['package.json'], commitMessage);
-
-    // push the branch
-    await internals.push(inputPath, branchName);
-
-    console.log(`Pushed ${branchName} to ${repoInfo.owner}/${repoInfo.name}`);
-
-    // MAKE THE PR
+internals.createPR = async function (repoInfo, branchName, commitMessage) {
 
     const octokit = Octokit({ baseUrl: internals.getBaseUrl(repoInfo.host) });
 
@@ -164,8 +119,56 @@ exports.bump = async function (inputPath, packageName, beforeVersion, afterVersi
         title: `[Technical] ${commitMessage}`
     });
 
-    // print out the link to the PR
-    console.log(result.data.url);
+    return result.data.url;
+};
+
+exports.bump = async function (inputPath, packageName, beforeVersion, afterVersion) {
+
+    Hoek.assert(GITHUB_USERNAME, 'GITHUB_USERNAME required');
+    Hoek.assert(GITHUB_PASSWORD, 'GITHUB_PASSWORD required');
+
+    const packagePath = Path.resolve(inputPath, 'package.json');
+    const repoInfo = await internals.getRepoInfo(inputPath);
+    const safeVersion = afterVersion.replace(/[\^\~]/g, '');
+    const safePackageName = packageName.replace('@', '').replace('/', '-');
+    const branchName = `bump-${safePackageName}-v${safeVersion}`;
+    const commitMessage = `Bump ${safePackageName} to v${safeVersion}`;
+
+    // Fail if there are changes that need stashing.
+    Hoek.assert(!await internals.repoHasUncommittedChanges(inputPath), `The repo (${inputPath}) has uncommitted changes.`);
+
+    // git checkout master
+    await internals.checkoutBranch(inputPath, 'master');
+
+    // git pull
+    await internals.pull(inputPath);
+
+    // Fail if the current version doesn't match the before version.
+    const pkg = JSON.parse(Fs.readFileSync(packagePath, 'utf8'));
+    const currentVersion = pkg.dependencies[packageName];
+    Hoek.assert(currentVersion === beforeVersion, `${currentVersion} must equal ${beforeVersion}`);
+
+    // git checkout -b ${branchName}
+    await internals.createBranch(inputPath, branchName);
+    await internals.checkoutBranch(inputPath, branchName);
+
+    // Change the file.
+    pkg.dependencies[packageName] = afterVersion;
+    Fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n');
+
+    // git add package.json
+    // git commit -m "${commitMessage}"
+    await internals.commitPaths(inputPath, ['package.json'], commitMessage);
+
+    // git push -u origin ${branchName}
+    await internals.push(inputPath, branchName);
+
+    console.log(`Pushed ${branchName} to ${repoInfo.owner}/${repoInfo.name}`);
+
+    // Make the PR.
+    const url = await internals.createPR(repoInfo, branchName, commitMessage);
+
+    console.log(url);
 };
 
 if (require.main === module) {

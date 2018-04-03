@@ -16,5 +16,8 @@
   "devDependencies": {
     "code": "^5.0.0",
     "lab": "^15.0.0"
+  },
+  "bin": {
+    "bump": "./bin/bump.js"
   }
 }
