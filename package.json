@@ -9,11 +9,12 @@
   "author": "Le Roux Bodenstein",
   "license": "MIT",
   "dependencies": {
-    "hoek": "^5.0.3",
-    "nodegit": "^0.21.2"
+    "@octokit/rest": "^15.0.0",
+    "hoek": "^5.0.0",
+    "nodegit": "^0.0.0"
   },
   "devDependencies": {
-    "code": "^5.2.0",
-    "lab": "^15.4.1"
+    "code": "^5.0.0",
+    "lab": "^15.0.0"
   }
 }

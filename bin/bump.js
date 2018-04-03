@@ -4,9 +4,13 @@
 
 const Fs = require('fs');
 const Path = require('path');
+const Url = require('url');
 
 const Hoek = require('hoek');
 const Git = require('nodegit');
+
+const Octokit = require('@octokit/rest');
+
 
 const internals = {};
 
@@ -40,6 +44,16 @@ internals.lookupRemote = async function (inputPath, remoteName) {
 
     const repo = await Git.Repository.open(inputPath);
     return repo.getRemote(remoteName);
+};
+
+internals.getRepoInfo = async function (inputPath) {
+
+    const remote = await internals.lookupRemote(inputPath, 'origin');
+    const url = remote.url();
+    const parsed = Url.parse(url);
+    const host = parsed.hostname;
+    const [owner, name] = parsed.pathname.slice(1).replace('.git', '').split('/');
+    return { host, owner, name };
 };
 
 internals.pull = async function (inputPath) {
@@ -78,15 +92,28 @@ internals.commitPaths = async function (inputPath, paths, message) {
     return repo.createCommit('HEAD', signature, signature, message, oid, [head]);
 };
 
+internals.getBaseUrl = function (hostName) {
+
+    if (hostName === 'github.com') {
+        return 'https://api.github.com';
+    }
+
+    return `https://${hostName}/api/v3`;
+};
+
 exports.bump = async function (inputPath, packageName, beforeVersion, afterVersion) {
 
     Hoek.assert(GITHUB_USERNAME, 'GITHUB_USERNAME required');
     Hoek.assert(GITHUB_PASSWORD, 'GITHUB_PASSWORD required');
 
     const packagePath = Path.resolve(inputPath, 'package.json');
-
+    const repoInfo = await internals.getRepoInfo(inputPath);
     const safeVersion = afterVersion.replace(/[\^\~]/g, '');
     const safePackageName = packageName.replace('@', '').replace('/', '-');
+    const branchName = `bump-${safePackageName}-v${safeVersion}`;
+    const commitMessage = `Bump ${safePackageName} to v${safeVersion}`;
+
+    // CREATE THE BRANCH
 
     // fail if there are changes that need stashing
     Hoek.assert(!await internals.repoHasUncommittedChanges(inputPath), `The repo (${inputPath}) has uncommitted changes.`);
@@ -103,7 +130,6 @@ exports.bump = async function (inputPath, packageName, beforeVersion, afterVersi
     Hoek.assert(currentVersion === beforeVersion, `${currentVersion} must equal ${beforeVersion}`);
 
     // git checkout -b ${branchName}
-    const branchName = `bump-${safePackageName}-v${safeVersion}`;
     await internals.createBranch(inputPath, branchName);
     await internals.checkoutBranch(inputPath, branchName);
 
@@ -112,16 +138,34 @@ exports.bump = async function (inputPath, packageName, beforeVersion, afterVersi
     Fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n');
 
     // add and commit the change
-    const commitMessage = `Bump ${safePackageName} to v${safeVersion}`;
     await internals.commitPaths(inputPath, ['package.json'], commitMessage);
 
     // push the branch
     await internals.push(inputPath, branchName);
 
-    console.log(`Pushed ${branchName}`);
+    console.log(`Pushed ${branchName} to ${repoInfo.owner}/${repoInfo.name}`);
 
-    // TODO: make a new PR
-    // TODO: print out the link to the PR
+    // MAKE THE PR
+
+    const octokit = Octokit({ baseUrl: internals.getBaseUrl(repoInfo.host) });
+
+    // TODO: support different kinds of auth
+    octokit.authenticate({
+        type: 'basic',
+        username: GITHUB_USERNAME,
+        password: GITHUB_PASSWORD
+    });
+
+    const result = await octokit.pullRequests.create({
+        owner: repoInfo.owner,
+        repo: repoInfo.name,
+        head: branchName,
+        base: 'master',
+        title: `[Technical] ${commitMessage}`
+    });
+
+    // print out the link to the PR
+    console.log(result.data.url);
 };
 
 if (require.main === module) {
